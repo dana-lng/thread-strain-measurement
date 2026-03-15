@@ -1,0 +1,99 @@
+from __future__ import annotations
+
+import argparse
+import json
+from pathlib import Path
+
+import numpy as np
+from PIL import Image
+
+
+ROOT = Path(__file__).resolve().parents[2]
+CALIBRATION_FILE = ROOT / 'data' / 'calibration' / 'camera_calibration.json'
+DEFAULT_OUTPUT_ROOT = ROOT / 'data' / 'preprocessed'
+
+
+def load_image(path: Path) -> np.ndarray:
+    with Image.open(path) as image:
+        return np.array(image.convert('L'), dtype=np.uint8)
+
+
+def load_calibration(path: Path) -> dict:
+    with path.open('r', encoding='utf-8') as handle:
+        return json.load(handle)
+
+
+def rectify_image(image: np.ndarray, calibration: dict) -> np.ndarray:
+    height, width = image.shape
+    calib_height = float(calibration['image_height'])
+    shear = calibration['shear_model']
+    slope_a = float(shear['slope_a'])
+    slope_b = float(shear['slope_b'])
+    u_center = float(calibration.get('u_center', width / 2.0))
+
+    dst_x, dst_y = np.meshgrid(
+        np.arange(width, dtype=np.float32),
+        np.arange(height, dtype=np.float32),
+    )
+
+    # Calibrierung wurde mit 128x1000 aufgenommen. Fuer 128x880 skalieren wir die
+    # Y-Koordinate in den Kalibrierraum und transformieren die resultierende
+    # Verschiebung wieder zurueck in den aktuellen Bildraum.
+    y_scale = height / calib_height if calib_height > 0 else 1.0
+    dst_y_cal = dst_y / max(y_scale, 1e-6)
+    slope_cal = slope_a * dst_y_cal + slope_b
+    slope_current = slope_cal * y_scale
+    src_y = dst_y + slope_current * (dst_x - u_center)
+
+    y0 = np.floor(src_y).astype(np.int32)
+    y1 = y0 + 1
+    x = dst_x.astype(np.int32)
+
+    valid = (y0 >= 0) & (y1 < height)
+    y0_clipped = np.clip(y0, 0, height - 1)
+    y1_clipped = np.clip(y1, 0, height - 1)
+
+    top = image[y0_clipped, x].astype(np.float32)
+    bottom = image[y1_clipped, x].astype(np.float32)
+    weight = src_y - y0
+
+    remapped = top * (1.0 - weight) + bottom * weight
+    remapped[~valid] = 128.0
+    return np.clip(remapped, 0, 255).astype(np.uint8)
+
+
+def build_output_path(input_path: Path, output_path: Path | None) -> Path:
+    if output_path is not None:
+        return output_path
+
+    parent_name = input_path.parent.name
+    target_dir = DEFAULT_OUTPUT_ROOT / parent_name
+    return target_dir / f'{input_path.stem}_rectified.png'
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description='Apply the calibrated shear rectification to an input image.')
+    parser.add_argument('input_image', type=Path, help='Path to the input TIFF/PNG image.')
+    parser.add_argument('--output', type=Path, default=None, help='Optional explicit output file path.')
+    parser.add_argument('--calibration', type=Path, default=CALIBRATION_FILE, help='Calibration JSON path.')
+    return parser.parse_args()
+
+
+def main() -> None:
+    args = parse_args()
+    input_path = args.input_image.resolve()
+    output_path = build_output_path(input_path, args.output)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    image = load_image(input_path)
+    calibration = load_calibration(args.calibration.resolve())
+    rectified = rectify_image(image, calibration)
+    Image.fromarray(rectified, mode='L').save(output_path)
+
+    print(f'Input: {input_path}')
+    print(f'Output: {output_path}')
+    print(f'Size: {image.shape[1]}x{image.shape[0]}')
+
+
+if __name__ == '__main__':
+    main()

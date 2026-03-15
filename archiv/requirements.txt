@@ -1,0 +1,15 @@
+# Pflicht
+torch>=2.0.0
+torchvision>=0.15.0
+opencv-python>=4.7.0
+numpy>=1.24.0
+
+# Für Plots und Analyse
+matplotlib>=3.7.0
+scipy>=1.10.0
+
+# Optional (bessere LOWESS-Glättung, entspricht MATLAB rloess)
+statsmodels>=0.14.0
+
+# Optional (für beschleunigte TIFF-Verarbeitung)
+tifffile>=2023.1.1
