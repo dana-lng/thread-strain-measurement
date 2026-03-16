@@ -23,6 +23,14 @@ def load_calibration(path: Path) -> dict:
         return json.load(handle)
 
 
+def median_filter(image: np.ndarray, kernel_size: int = 3) -> np.ndarray:
+    pad = kernel_size // 2
+    padded = np.pad(image, pad_width=pad, mode='edge')
+    windows = np.lib.stride_tricks.sliding_window_view(padded, (kernel_size, kernel_size))
+    filtered = np.median(windows, axis=(-2, -1))
+    return filtered.astype(np.uint8)
+
+
 def rectify_image(image: np.ndarray, calibration: dict) -> np.ndarray:
     height, width = image.shape
     calib_height = float(calibration['image_height'])
@@ -36,9 +44,6 @@ def rectify_image(image: np.ndarray, calibration: dict) -> np.ndarray:
         np.arange(height, dtype=np.float32),
     )
 
-    # Calibrierung wurde mit 128x1000 aufgenommen. Fuer 128x880 skalieren wir die
-    # Y-Koordinate in den Kalibrierraum und transformieren die resultierende
-    # Verschiebung wieder zurueck in den aktuellen Bildraum.
     y_scale = height / calib_height if calib_height > 0 else 1.0
     dst_y_cal = dst_y / max(y_scale, 1e-6)
     slope_cal = slope_a * dst_y_cal + slope_b
@@ -62,6 +67,11 @@ def rectify_image(image: np.ndarray, calibration: dict) -> np.ndarray:
     return np.clip(remapped, 0, 255).astype(np.uint8)
 
 
+def preprocess_image(image: np.ndarray, calibration: dict, kernel_size: int = 3) -> np.ndarray:
+    rectified = rectify_image(image, calibration)
+    return median_filter(rectified, kernel_size=kernel_size)
+
+
 def build_output_path(input_path: Path, output_path: Path | None) -> Path:
     if output_path is not None:
         return output_path
@@ -72,27 +82,32 @@ def build_output_path(input_path: Path, output_path: Path | None) -> Path:
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description='Apply the calibrated shear rectification to an input image.')
+    parser = argparse.ArgumentParser(description='Apply calibrated rectification and smoothing to an input image.')
     parser.add_argument('input_image', type=Path, help='Path to the input TIFF/PNG image.')
     parser.add_argument('--output', type=Path, default=None, help='Optional explicit output file path.')
     parser.add_argument('--calibration', type=Path, default=CALIBRATION_FILE, help='Calibration JSON path.')
+    parser.add_argument('--kernel-size', type=int, default=3, help='Odd median filter size, default 3.')
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
+    if args.kernel_size < 1 or args.kernel_size % 2 == 0:
+        raise ValueError('kernel-size must be a positive odd number.')
+
     input_path = args.input_image.resolve()
     output_path = build_output_path(input_path, args.output)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     image = load_image(input_path)
     calibration = load_calibration(args.calibration.resolve())
-    rectified = rectify_image(image, calibration)
-    Image.fromarray(rectified, mode='L').save(output_path)
+    processed = preprocess_image(image, calibration, kernel_size=args.kernel_size)
+    Image.fromarray(processed, mode='L').save(output_path)
 
     print(f'Input: {input_path}')
     print(f'Output: {output_path}')
     print(f'Size: {image.shape[1]}x{image.shape[0]}')
+    print(f'Kernel: {args.kernel_size}x{args.kernel_size}')
 
 
 if __name__ == '__main__':

@@ -8,7 +8,7 @@ from PIL import Image
 
 
 ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_OUTPUT_DIR = ROOT / 'data' / 'to_smooth'
+DEFAULT_OUTPUT_DIR = ROOT / 'data' / 'preprocessed'
 
 
 def load_grayscale_image(path: Path) -> np.ndarray:
