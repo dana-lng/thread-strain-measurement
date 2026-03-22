@@ -1,5 +1,10 @@
 venv/
-data/
-figures/*
+!data/preprocessed/
+data/preprocessed/*
+data/raw/*
+!data/raw/
+!data/calibration/
 !figures/sobel/
 figures/sobel/*/
+!results/strain/
+results/strain/*/

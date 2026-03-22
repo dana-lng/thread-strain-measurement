@@ -6,6 +6,7 @@ Dieses Projekt verarbeitet Hochgeschwindigkeitsbilder aus verschiedenen Versuche
    - Scherungskorrektur (`rectify`)
    - Glättung (`smoothing`)
 2. Sobel-basierte Markierungserkennung mit Diagrammausgabe
+3. Dehnungsberechnung aus Markerabstand und Kalibrierung
 
 
 ## Projektstruktur
@@ -58,6 +59,7 @@ python -m pip install -r requirements.txt
 - Kalibrierung liegt unter `data/calibration`
 - Vorverarbeitete Bilder landen unter `data/preprocessed/Versuch_X`
 - Sobel-Diagramme landen unter `figures/sobel/Versuch_X`
+- Dehnungs-CSV-Dateien landen unter `results/strain/Versuch_X`
 
 Wichtig:
 - `preprocessed` enthält bereits das kombinierte Ergebnis aus
@@ -70,7 +72,7 @@ Wichtig:
 Die GUI ist der einfachste Einstieg:
 
 ```Terminal
-python .\src\gui\preprocess_gui.py
+python .\src\gui\main_gui.py
 ```
 
 Die GUI bietet:
@@ -80,8 +82,9 @@ Die GUI bietet:
   - speichert alle Ergebnisse nach `data/preprocessed/Versuch_X`
 - `Sobel starten`
   - läuft auf den bereits preprocesseden Bildern
-  - zeigt die Diagramme live in der GUI
+  - zeigt die Diagramme und die Dehnung live in der GUI
   - speichert die Diagramme nach `figures/sobel/Versuch_X`
+  - speichert Messwerte als CSV nach `results/strain/Versuch_X`
 - `Abbrechen`
   - stoppt den aktuellen Lauf nach dem gerade bearbeiteten Bild
 
@@ -107,7 +110,7 @@ Die Marker-Suche arbeitet sequenziell stabilisiert:
 
 ## Wichtige Dateien
 
-- `src/gui/preprocess_gui.py`
+- `src/gui/main_gui.py`
   - Haupt-GUI für Preprocessing und Sobel
 - `src/preprocessesing/rectify_first_versuch1.py`
   - kombiniert Scherungskorrektur und Glättung für Einzelbilder
