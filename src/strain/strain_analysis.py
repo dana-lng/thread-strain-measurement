@@ -12,7 +12,7 @@ import numpy as np
 ROOT = Path(__file__).resolve().parents[2]
 CALIBRATION_PATH = ROOT / 'data' / 'calibration' / 'camera_calibration.json'
 RESULTS_ROOT = ROOT / 'results' / 'strain'
-REST_DISTANCE_MM = 20.0
+REST_DISTANCE_MM = 19.3
 
 
 @dataclass(frozen=True)

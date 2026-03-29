@@ -5,7 +5,6 @@ from pathlib import Path
 
 import matplotlib
 matplotlib.use('Agg')
-import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.figure import Figure
 from PIL import Image
@@ -29,14 +28,11 @@ def load_image(path: Path) -> np.ndarray:
 
 
 def sobel_y(image: np.ndarray) -> np.ndarray:
-    # Sobel in Y-Richtung hebt horizontale Kanten hervor.
+    # Direkte Nachbarzugriffe sind hier deutlich schneller als sliding_window_view.
     padded = np.pad(image, ((1, 1), (1, 1)), mode='edge')
-    windows = np.lib.stride_tricks.sliding_window_view(padded, (3, 3))
-    kernel = np.array(
-        [[1.0, 2.0, 1.0], [0.0, 0.0, 0.0], [-1.0, -2.0, -1.0]],
-        dtype=np.float32,
-    )
-    return np.tensordot(windows, kernel, axes=((2, 3), (0, 1)))
+    top = padded[:-2, :-2] + 2.0 * padded[:-2, 1:-1] + padded[:-2, 2:]
+    bottom = padded[2:, :-2] + 2.0 * padded[2:, 1:-1] + padded[2:, 2:]
+    return top - bottom
 
 
 def smooth_1d(values: np.ndarray, radius: int = 9) -> np.ndarray:

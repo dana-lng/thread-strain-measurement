@@ -25,6 +25,9 @@ from detect_markers import INPUT_ROOT, OUTPUT_ROOT, find_two_markers, load_image
 from strain_analysis import compute_strain, load_calibration, open_strain_csv  # noqa: E402
 
 
+DEFAULT_UPDATE_EVERY = 10
+
+
 class PreprocessGui:
     def __init__(self, root: tk.Tk) -> None:
         self.root = root
@@ -45,7 +48,8 @@ class PreprocessGui:
         self.live_y_bot_raw: list[float] = []
 
         self.experiment_var = tk.StringVar(value=' ')
-        self.status_var = tk.StringVar(value='Bereit. Bitte Versuchsnummer eingeben.')
+        self.update_every_var = tk.StringVar(value=str(DEFAULT_UPDATE_EVERY))
+        self.status_var = tk.StringVar(value='Bereit. Bitte Ordnernamen eingeben.')
         self.progress_var = tk.StringVar(value='Noch nicht gestartet.')
 
         self._build_ui()
@@ -60,15 +64,22 @@ class PreprocessGui:
         left.pack(side='left', fill='y')
 
         ttk.Label(left, text='Versuch Pipeline', font=('Segoe UI', 14, 'bold')).pack(anchor='w')
-        ttk.Label(left, text='Nur die Versuchsnummer eingeben. Beispiel: 1, 10 oder 11.').pack(anchor='w', pady=(6, 18))
+        ttk.Label(left, text='Den kompletten Ordnernamen eingeben. Beispiele: Versuch_1 oder Abfahrrampe bis 0_II.').pack(anchor='w', pady=(6, 18))
 
         input_row = ttk.Frame(left)
         input_row.pack(fill='x')
-        ttk.Label(input_row, text='Versuchsnummer:').pack(side='left')
-        self.entry = ttk.Entry(input_row, textvariable=self.experiment_var, width=12)
+        ttk.Label(input_row, text='Ordnername:').pack(side='left')
+        self.entry = ttk.Entry(input_row, textvariable=self.experiment_var, width=24)
         self.entry.pack(side='left', padx=(10, 12))
         self.entry.focus_set()
         self.entry.bind('<Return>', lambda _event: self.start_preprocess())
+
+        interval_row = ttk.Frame(left)
+        interval_row.pack(fill='x', pady=(10, 0))
+        ttk.Label(interval_row, text='Jedes').pack(side='left')
+        self.interval_entry = ttk.Entry(interval_row, textvariable=self.update_every_var, width=8)
+        self.interval_entry.pack(side='left', padx=(10, 12))
+        ttk.Label(interval_row, text='Bild soll gespeichert und live geplottet werden. Je höher die Zahl, desto schneller wird geplottet.').pack(side='left')
 
         button_row = ttk.Frame(left)
         button_row.pack(fill='x', pady=(14, 0))
@@ -95,6 +106,8 @@ class PreprocessGui:
         self.profile_axis = self.figure.add_subplot(grid[0, 1])
         self.y_position_axis = self.figure.add_subplot(grid[1, 0])
         self.strain_axis = self.figure.add_subplot(grid[1, 1])
+        self.distance_axis = None
+        self.figure.subplots_adjust(left=0.07, right=0.95, top=0.93, bottom=0.08, wspace=0.28, hspace=0.28)
         self.canvas = FigureCanvasTkAgg(self.figure, master=preview)
         self.canvas.get_tk_widget().pack(fill='both', expand=True)
         self._draw_placeholder()
@@ -118,18 +131,22 @@ class PreprocessGui:
             axis.text(0.5, 0.5, 'Noch keine Daten', ha='center', va='center', transform=axis.transAxes)
             axis.set_xticks([])
             axis.set_yticks([])
-        self.figure.tight_layout()
         self.canvas.draw_idle()
 
     def _infer_fps(self, experiment: str) -> float:
-        try:
-            number = int(experiment.split('_')[-1])
-        except (TypeError, ValueError):
+        normalized = experiment.strip().lower()
+        if normalized.startswith('versuch_'):
+            try:
+                number = int(experiment.split('_')[-1])
+            except (TypeError, ValueError):
+                return 1.0
+            if 1 <= number <= 6:
+                return 2000.0
+            if 8 <= number <= 11:
+                return 6000.0
             return 1.0
-        if 1 <= number <= 6:
+        if normalized.startswith('abfahrrampe bis'):
             return 2000.0
-        if 8 <= number <= 11:
-            return 6000.0
         return 1.0
 
     def _smooth_series(self, values: list[float], window: int = 15) -> np.ndarray:
@@ -156,14 +173,30 @@ class PreprocessGui:
         self.preprocess_button.configure(state=state)
         self.sobel_button.configure(state=state)
         self.entry.configure(state=state)
+        self.interval_entry.configure(state=state)
         self.cancel_button.configure(state='normal' if busy else 'disabled')
 
     def _normalize_experiment(self) -> str | None:
-        experiment_number = self.experiment_var.get().strip()
-        if not experiment_number:
-            messagebox.showerror('Fehlende Eingabe', 'Bitte eine Versuchsnummer eingeben.')
+        experiment_name = self.experiment_var.get().strip()
+        if not experiment_name:
+            messagebox.showerror('Fehlende Eingabe', 'Bitte einen Ordnernamen eingeben.')
             return None
-        return experiment_number if experiment_number.lower().startswith('versuch_') else f'Versuch_{experiment_number}'
+        return experiment_name
+
+    def _normalize_update_every(self) -> int | None:
+        raw_value = self.update_every_var.get().strip()
+        if not raw_value:
+            messagebox.showerror('Fehlende Eingabe', 'Bitte ein Intervall n eingeben.')
+            return None
+        try:
+            value = int(raw_value)
+        except ValueError:
+            messagebox.showerror('Ungueltiges Intervall', 'Das Intervall n muss eine ganze Zahl sein.')
+            return None
+        if value <= 0:
+            messagebox.showerror('Ungueltiges Intervall', 'Das Intervall n muss groesser als 0 sein.')
+            return None
+        return value
 
     def cancel_current(self) -> None:
         if self.worker is None or not self.worker.is_alive():
@@ -202,6 +235,9 @@ class PreprocessGui:
         experiment = self._normalize_experiment()
         if experiment is None:
             return
+        update_every = self._normalize_update_every()
+        if update_every is None:
+            return
 
         experiment_dir = input_root / experiment
         if not experiment_dir.exists():
@@ -212,13 +248,13 @@ class PreprocessGui:
         self.active_mode = mode
         self.progress['value'] = 0
         self.status_var.set(f'Starte {title_prefix} {experiment} ...')
-        self.progress_var.set('Marker, Profile und Dehnung werden live aktualisiert.')
+        self.progress_var.set(f'Marker, Profile und Dehnung werden alle {update_every} Bilder aktualisiert.')
         self._set_busy(True)
         self.log_box.configure(state='normal')
         self.log_box.delete('1.0', 'end')
         self.log_box.configure(state='disabled')
         self._draw_placeholder()
-        self.worker = threading.Thread(target=self._run_sobel, args=(experiment, input_root, output_root, mode), daemon=True)
+        self.worker = threading.Thread(target=self._run_sobel, args=(experiment, input_root, output_root, mode, update_every), daemon=True)
         self.worker.start()
 
     def _run_preprocess(self, experiment: str) -> None:
@@ -236,7 +272,7 @@ class PreprocessGui:
 
         self.queue.put(('done', (experiment, total, 'preprocess', 'data/preprocessed', None)))
 
-    def _run_sobel(self, experiment: str, input_root: Path, output_root: Path, mode: str) -> None:
+    def _run_sobel(self, experiment: str, input_root: Path, output_root: Path, mode: str, update_every: int) -> None:
         files = sorted((input_root / experiment).glob('*.png' if input_root == INPUT_ROOT else '*.tif'))
         if not files:
             self.queue.put(('error', (experiment, FileNotFoundError(f'Keine Bilddateien gefunden in {input_root / experiment}'))))
@@ -256,15 +292,17 @@ class PreprocessGui:
                 markers, intensity_profile, sobel_profile = find_two_markers(image, previous_markers=previous_markers)
                 previous_markers = markers
                 strain_result = compute_strain(markers, image.shape[0], self.calibration)
-                output_path = save_sobel_diagram(
-                    image,
-                    markers,
-                    intensity_profile,
-                    sobel_profile,
-                    input_path,
-                    input_root=input_root,
-                    output_root=output_root,
-                )
+                output_path = None
+                if index == 1 or index % update_every == 0 or index == total:
+                    output_path = save_sobel_diagram(
+                        image,
+                        markers,
+                        intensity_profile,
+                        sobel_profile,
+                        input_path,
+                        input_root=input_root,
+                        output_root=output_root,
+                    )
                 time_ms = (index - 1) / fps * 1000.0 if fps > 0 else float(index - 1)
                 csv_writer.writerow([
                     index,
@@ -277,21 +315,31 @@ class PreprocessGui:
                     f'{strain_result.distance_mm:.6f}',
                     f'{strain_result.strain_percent:.6f}',
                 ])
-                payload = {
+                progress_payload = {
                     'mode': mode,
                     'experiment': experiment,
                     'index': index,
                     'total': total,
                     'input_path': input_path,
                     'output_path': output_path,
-                    'image': image,
-                    'markers': markers,
-                    'intensity_profile': intensity_profile,
-                    'sobel_profile': sobel_profile,
                     'strain_result': strain_result,
                     'time_ms': time_ms,
                 }
-                self.queue.put(('sobel_progress', payload))
+                self.queue.put(('sobel_progress', progress_payload))
+
+                if index == 1 or index % update_every == 0 or index == total:
+                    plot_payload = {
+                        'index': index,
+                        'input_path': input_path,
+                        'image': image,
+                        'markers': markers,
+                        'intensity_profile': intensity_profile,
+                        'sobel_profile': sobel_profile,
+                        'strain_result': strain_result,
+                        'time_ms': time_ms,
+                        'total': total,
+                    }
+                    self.queue.put(('sobel_plot', plot_payload))
         except ProcessingCancelled as exc:
             self.queue.put(('cancelled', (experiment, str(exc))))
             return
@@ -329,6 +377,9 @@ class PreprocessGui:
         self.profile_axis.clear()
         self.y_position_axis.clear()
         self.strain_axis.clear()
+        if self.distance_axis is not None:
+            self.distance_axis.remove()
+            self.distance_axis = None
 
         self.marker_axis.imshow(image, cmap='gray', aspect='auto')
         for marker in markers:
@@ -364,16 +415,43 @@ class PreprocessGui:
         self.y_position_axis.grid(True, alpha=0.3)
         self.y_position_axis.legend(loc='best')
 
-        self.strain_axis.plot(self.live_time_ms, self.live_distance_values, color='darkgreen', label='Abstand [mm]')
-        self.strain_axis.plot(self.live_time_ms, self.live_strain_values, color='darkorange', label='Dehnung [%]')
+        total = int(payload.get('total', frame_index))
+
+        strain_line = self.strain_axis.plot(self.live_time_ms, self.live_strain_values, color='darkorange', label='Dehnung [%]')[0]
         self.strain_axis.scatter(self.live_time_ms[-1], self.live_strain_values[-1], color='darkorange', s=28)
         self.strain_axis.set_title(f'Frame {frame_index}: {strain_result.distance_mm:.2f} mm, {strain_result.strain_percent:.2f} %')
         self.strain_axis.set_xlabel('Zeit (ms)')
-        self.strain_axis.set_ylabel('Wert')
+        self.strain_axis.set_ylabel('Dehnung [%]', color='darkorange')
+        self.strain_axis.set_ylim(-5.0, 5.0)
+        self.strain_axis.tick_params(axis='y', colors='darkorange')
         self.strain_axis.grid(True, alpha=0.3)
-        self.strain_axis.legend(loc='best')
 
-        self.figure.tight_layout()
+        self.distance_axis = self.strain_axis.twinx()
+        distance_line = self.distance_axis.plot(self.live_time_ms, self.live_distance_values, color='darkgreen', label='Abstand [mm]')[0]
+        self.distance_axis.set_ylabel('Abstand [mm]', color='darkgreen')
+        self.distance_axis.set_ylim(15.0, 21.0)
+        self.distance_axis.tick_params(axis='y', colors='darkgreen')
+
+        legend_handles = [strain_line, distance_line]
+        legend_labels = ['Dehnung [%]', 'Abstand [mm]']
+        if frame_index == total and len(self.live_time_ms) >= 2:
+            time_arr = np.asarray(self.live_time_ms, dtype=np.float64)
+            strain_arr = np.asarray(self.live_strain_values, dtype=np.float64)
+            distance_arr = np.asarray(self.live_distance_values, dtype=np.float64)
+
+            strain_coeffs = np.polyfit(time_arr, strain_arr, 1)
+            strain_fit = np.polyval(strain_coeffs, time_arr)
+            strain_fit_line = self.strain_axis.plot(time_arr, strain_fit, color='firebrick', linestyle='--', linewidth=1.8, label='Regression Dehnung')[0]
+
+            distance_coeffs = np.polyfit(time_arr, distance_arr, 1)
+            distance_fit = np.polyval(distance_coeffs, time_arr)
+            distance_fit_line = self.distance_axis.plot(time_arr, distance_fit, color='navy', linestyle='--', linewidth=1.8, label='Regression Abstand')[0]
+
+            legend_handles.extend([strain_fit_line, distance_fit_line])
+            legend_labels.extend(['Regression Dehnung', 'Regression Abstand'])
+
+        self.strain_axis.legend(legend_handles, legend_labels, loc='best')
+
         self.canvas.draw_idle()
 
     def _poll_queue(self) -> None:
@@ -398,12 +476,18 @@ class PreprocessGui:
                     self.progress['value'] = index / total * 100
                     label = 'preprocessed'
                     self.status_var.set(f'{experiment}: {index} von {total} Bildern mit Sobel auf {label} ausgewertet')
-                    self.progress_var.set(
-                        f'Letztes Diagramm: {Path(output_path).name} | Abstand {strain_result.distance_mm:.2f} mm | Dehnung {strain_result.strain_percent:.2f} %'
-                    )
-                    self._update_live_plot(payload)
+                    if output_path is not None:
+                        self.progress_var.set(
+                            f'Letztes Diagramm: {Path(output_path).name} | Abstand {strain_result.distance_mm:.2f} mm | Dehnung {strain_result.strain_percent:.2f} %'
+                        )
+                    else:
+                        self.progress_var.set(
+                            f'Kein Diagramm fuer dieses Bild gespeichert | Abstand {strain_result.distance_mm:.2f} mm | Dehnung {strain_result.strain_percent:.2f} %'
+                        )
                     if index == 1 or index % 100 == 0 or index == total:
                         self.log(f'{experiment}: {index}/{total} -> {Path(input_path).name}')
+                elif event == 'sobel_plot':
+                    self._update_live_plot(payload)
                 elif event == 'done':
                     experiment, total, mode, target_dir, csv_path = payload
                     self.progress['value'] = 100
